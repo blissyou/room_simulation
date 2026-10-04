@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>내 방 둘러보기</title>
+<style>
+:root{--bg:#e9e4dc;--panel:rgba(255,255,255,.86);--ink:#2a2622;--sub:#6b635a;--line:rgba(0,0,0,.12);box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1d1b19;--panel:rgba(30,28,26,.86);--ink:#efeae3;--sub:#a59d93;--line:rgba(255,255,255,.14)}}
+:root[data-theme="dark"]{--bg:#1d1b19;--panel:rgba(30,28,26,.86);--ink:#efeae3;--sub:#a59d93;--line:rgba(255,255,255,.14)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:"Pretendard","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;overflow:hidden;-webkit-user-select:none;user-select:none}
+#stage{position:absolute;inset:0;touch-action:none;cursor:grab}
+#stage canvas{display:block}
+.bar{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));left:12px;right:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;pointer-events:none}
+.bar button{pointer-events:auto;font:inherit;font-size:14px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:8px 14px;cursor:pointer;backdrop-filter:blur(8px)}
+.bar button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.bar button:focus-visible{outline:2px solid #4a7bd0;outline-offset:2px}
+.hint{position:absolute;left:12px;bottom:calc(14px + env(safe-area-inset-bottom,0px));font-size:13px;color:var(--sub);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;max-width:min(360px,60vw);line-height:1.5}
+#joy{position:absolute;right:20px;bottom:calc(24px + env(safe-area-inset-bottom,0px));width:120px;height:120px;border-radius:50%;background:var(--panel);border:1px solid var(--line);touch-action:none;display:none}
+#knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:var(--ink);opacity:.75}
+@media (pointer:coarse){#joy{display:block}.hint .k{display:none}}
+@media (pointer:fine){.hint .t{display:none}}
+#err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:24px;text-align:center;font-size:15px;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="stage" aria-label="방 3D 보기"></div>
+<div class="bar">
+  <button id="bDoor" aria-pressed="true">문 앞으로</button>
+  <button id="bTop" aria-pressed="false">위에서 보기</button>
+  <label style="pointer-events:auto;display:flex;align-items:center;gap:8px;font-size:14px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 14px">시야각 <input id="fov" type="range" min="60" max="120" step="1" value="100" style="width:110px"> <span id="fovv">100°</span></label>
+</div>
+<div class="hint"><span class="k">W A S D 또는 방향키로 걷기 · 마우스로 끌어서 둘러보기</span><span class="t">오른쪽 조이스틱으로 걷기 · 화면을 끌어서 둘러보기</span></div>
+<div id="joy"><div id="knob"></div></div>
+<div id="err">이 기기에서 3D 화면을 띄울 수 없어요. 다른 브라우저(크롬, 사파리 최신 버전)로 열어 보세요.</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+const stage=document.getElementById('stage');
+let renderer;
+try{renderer=new THREE.WebGLRenderer({antialias:true});}catch(e){document.getElementById('err').style.display='flex';return;}
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputEncoding=THREE.sRGBEncoding;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=0.82;
+stage.appendChild(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color('#d8d2c8');
+const cam=new THREE.PerspectiveCamera(70,1,0.05,50);
+const topCam=new THREE.OrthographicCamera(-1,1,1,-1,0.1,20);topCam.position.set(2,8,1.5);topCam.up.set(0,0,-1);topCam.lookAt(2,0,1.5);
+const G=new THREE.Group();G.scale.set(0.01,0.01,0.01);scene.add(G);
+const M=(c,o={})=>new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:0.8,metalness:0},o));
+function B(x0,x1,y0,y1,z0,z1,m,cast=true){const g=new THREE.Mesh(new THREE.BoxGeometry(x1-x0,y1-y0,z1-z0),m);g.position.set((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);g.castShadow=cast;g.receiveShadow=true;G.add(g);return g;}
+function C(x,z,r,y0,y1,m){const g=new THREE.Mesh(new THREE.CylinderGeometry(r,r,y1-y0,20),m);g.position.set(x,(y0+y1)/2,z);g.castShadow=true;g.receiveShadow=true;G.add(g);return g;}
+
+const cv=document.createElement('canvas');cv.width=1024;cv.height=512;const cx=cv.getContext('2d');
+for(let r=0;r<8;r++){let x=-Math.random()*400;while(x<1024){const len=300+Math.random()*350,t=Math.random();cx.fillStyle=`rgb(${184+t*28|0},${128+t*22|0},${82+t*16|0})`;cx.fillRect(x,r*64,len,64);
+for(let k=0;k<14;k++){cx.strokeStyle=`rgba(110,70,35,${0.05+Math.random()*0.08})`;cx.lineWidth=1+Math.random()*1.5;cx.beginPath();const yy=r*64+Math.random()*64;cx.moveTo(x,yy);cx.bezierCurveTo(x+len*.3,yy+(Math.random()-.5)*8,x+len*.6,yy+(Math.random()-.5)*8,x+len,yy+(Math.random()-.5)*4);cx.stroke();}
+cx.fillStyle='rgba(80,50,25,.45)';cx.fillRect(x,r*64,2,64);x+=len;}
+cx.fillStyle='rgba(80,50,25,.4)';cx.fillRect(0,r*64,1024,2);}
+const wood=new THREE.CanvasTexture(cv);wood.wrapS=wood.wrapT=THREE.RepeatWrapping;wood.repeat.set(2,2.5);wood.encoding=THREE.sRGBEncoding;wood.anisotropy=8;
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(400,300),M('#fff',{map:wood,roughness:.55}));floor.rotation.x=-Math.PI/2;floor.position.set(200,0,150);floor.receiveShadow=true;G.add(floor);
+
+const wallM=M('#f3f0ea',{roughness:.95});
+B(-10,0,0,240,-10,310,wallM,false);B(400,410,0,240,-10,310,wallM,false);B(-10,410,0,240,300,310,wallM,false);
+B(-10,151,0,240,-10,0,wallM,false);B(235,410,0,240,-10,0,wallM,false);B(151,235,210,240,-10,0,wallM,false);
+const frame=M('#fafafa',{roughness:.4});
+B(147,151,0,214,-11,1,frame);B(235,239,0,214,-11,1,frame);B(147,239,210,214,-11,1,frame);
+B(151,235,0,1,-10,0,M('#bfb6aa'));
+B(100,290,-1,0,-120,-10,M('#cfc9bf',{roughness:.9}),false);B(100,290,0,240,-125,-120,M('#dedad3'),false);
+B(236,330,0,210,-6,-3,M('#f6f3ee',{roughness:.5}));
+const ceil=new THREE.Mesh(new THREE.PlaneGeometry(400,300),M('#f7f6f2'));ceil.rotation.x=Math.PI/2;ceil.position.set(200,240,150);G.add(ceil);
+const base=M('#e6e1d8');B(0,400,0,6,298.8,300,base,false);B(398.8,400,0,6,0,300,base,false);B(0,1.2,0,6,0,300,base,false);B(0,151,0,6,0,1.2,base,false);B(235,400,0,6,0,1.2,base,false);
+
+const white=M('#f4f0e9',{roughness:.6}),dark=M('#2b2b2b',{roughness:.5}),metal=M('#9a9a9a',{metalness:.6,roughness:.35});
+B(0,135,0,78,0,11,white);B(12,118,78,82,4,12,dark);
+B(0,76,71,74,20,172,M('#d6c2a4',{roughness:.5}));
+[[3,23],[72,23],[3,169],[72,169]].forEach(p=>C(p[0],p[1],1.8,0,71,metal));
+B(17,21,95,145,40,143,dark);
+const scr=new THREE.Mesh(new THREE.PlaneGeometry(101,46),new THREE.MeshBasicMaterial({color:'#2d3d52'}));scr.rotation.y=Math.PI/2;scr.position.set(21.3,120,91.5);G.add(scr);
+B(4,22,74,77,82,100,metal);C(10,91,1.8,74,112,metal);
+B(39,73,74,74.6,49,134,dark);B(52,64,74.6,76.2,67,116,M('#dcdcdc',{roughness:.5}));
+const mouse=new THREE.Mesh(new THREE.SphereGeometry(3,16,10),M('#eee',{roughness:.4}));mouse.scale.set(1,.5,1.5);mouse.position.set(58,75.5,126);G.add(mouse);
+B(8,16,74,90,27,36,M('#dcdad5'));B(8,16,74,90,155,164,M('#dcdad5'));
+B(79,158,0,60,177,181,M('#d8cbb8'));
+const fr=M('#e9e9e7',{roughness:.35});B(341,400,0,172,0,64,fr);B(340.2,341,62,110,6,9,metal);B(340.5,341,118,119,0,64,M('#cfcfcd'));
+B(341,400,71,74,64,172,M('#d6c2a4',{roughness:.5}));B(395,400,0,71,64,172,white);B(341,400,0,71,169,172,white);
+B(362,388,74,75.5,98,133,M('#9a9a9a',{metalness:.4,roughness:.4}));B(386,388,75,96,98,133,M('#8d8d8d',{metalness:.4,roughness:.4}));
+const wd=M('#d9cdbd',{roughness:.7});B(341,400,0,205,172,300,wd);B(340.5,341,0,205,235.5,236.5,M('#cbc2b6'));
+B(339.5,341,95,125,229,231,metal);B(339.5,341,95,125,241,243,metal);B(339.5,341,95,125,293,295,metal);
+B(0,221,0,30,182,300,M('#a88f74'));B(2,219,30,50,184,298,M('#e4dccf',{roughness:.95}));
+B(30,217,50,53,183,299,M('#cfd8de',{roughness:1}));B(160,195,53,54.5,183,299,M('#8e9da8',{roughness:1}));
+const pil=new THREE.Mesh(new THREE.BoxGeometry(28,12,100),M('#fbfaf7',{roughness:1}));pil.position.set(19,57,241);pil.castShadow=true;G.add(pil);
+B(0,3,0,95,182,300,M('#a88f74'));
+[[226,265],[294,265],[226,298],[294,298]].forEach(p=>C(p[0],p[1],1,0,45,metal));
+[10,25,44].forEach(y=>{for(let z=265;z<=298;z+=8)B(224,296,y,y+1,z,z+1,metal);});
+B(246,282,45,58,268,294,M('#bba58e',{roughness:.9}));
+const lamp=new THREE.Mesh(new THREE.CylinderGeometry(25,25,2,32),new THREE.MeshBasicMaterial({color:'#fff'}));lamp.position.set(200,239,150);G.add(lamp);
+
+scene.add(new THREE.HemisphereLight('#fffaf2','#b89270',.45));
+scene.add(new THREE.AmbientLight('#fff',.12));
+const sun=new THREE.DirectionalLight('#fff4e4',.45);sun.position.set(2.4,3.6,.6);sun.target.position.set(1.9,0,1.8);scene.add(sun.target);
+sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-4,right:4,top:4,bottom:-4,near:.5,far:10});sun.shadow.bias=-.0005;sun.shadow.radius=4;scene.add(sun);
+const ceilL=new THREE.PointLight('#fff1dc',.65,8,1.5);ceilL.position.set(2,2.25,1.5);ceilL.castShadow=true;ceilL.shadow.mapSize.set(1024,1024);ceilL.shadow.bias=-.002;ceilL.shadow.radius=6;scene.add(ceilL);
+
+const solids=[[0,135,0,11],[0,76,20,172],[79,158,177,181],[0,221,182,300],[224,296,263,300],[341,400,0,300]];
+const R=18;
+function blocked(x,z){
+  if(z<-60||z>300-R||x<R||x>400-R)return true;
+  if(z<R&&(x<151+R||x>235-R))return true;
+  if(z<0&&(x<151||x>235))return true;
+  for(const s of solids){if(x>s[0]-R&&x<s[1]+R&&z>s[2]-R&&z<s[3]+R)return true;}
+  return false;
+}
+const start={x:193,z:20,yaw:Math.PI,pitch:-.22};
+let pos={x:start.x,z:start.z},yaw=start.yaw,pitch=start.pitch,mode='walk';
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;});
+addEventListener('keyup',e=>{keys[e.code]=false;});
+let drag=null;
+stage.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,id:e.pointerId};stage.setPointerCapture(e.pointerId);stage.style.cursor='grabbing';});
+stage.addEventListener('pointermove',e=>{if(!drag||e.pointerId!==drag.id||mode!=='walk')return;yaw+=(e.clientX-drag.x)*.004;pitch=Math.max(-1.2,Math.min(.9,pitch+(e.clientY-drag.y)*.004));drag.x=e.clientX;drag.y=e.clientY;});
+const endDrag=()=>{drag=null;stage.style.cursor='grab';};
+stage.addEventListener('pointerup',endDrag);stage.addEventListener('pointercancel',endDrag);
+const joy=document.getElementById('joy'),knob=document.getElementById('knob');let jv={x:0,y:0},jid=null;
+function jmove(e){const r=joy.getBoundingClientRect();let dx=e.clientX-(r.left+60),dy=e.clientY-(r.top+60);const l=Math.hypot(dx,dy);if(l>45){dx*=45/l;dy*=45/l;}knob.style.left=(40+dx)+'px';knob.style.top=(40+dy)+'px';jv={x:dx/45,y:dy/45};}
+joy.addEventListener('pointerdown',e=>{e.stopPropagation();jid=e.pointerId;joy.setPointerCapture(jid);jmove(e);});
+joy.addEventListener('pointermove',e=>{if(e.pointerId===jid)jmove(e);});
+const jend=()=>{jid=null;jv={x:0,y:0};knob.style.left='40px';knob.style.top='40px';};
+joy.addEventListener('pointerup',jend);joy.addEventListener('pointercancel',jend);
+const bDoor=document.getElementById('bDoor'),bTop=document.getElementById('bTop');
+bDoor.onclick=()=>{mode='walk';pos={x:start.x,z:start.z};yaw=start.yaw;pitch=start.pitch;lamp.visible=true;bDoor.setAttribute('aria-pressed','true');bTop.setAttribute('aria-pressed','false');};
+bTop.onclick=()=>{mode='top';lamp.visible=false;bTop.setAttribute('aria-pressed','true');bDoor.setAttribute('aria-pressed','false');};
+let hfov=100;const fovIn=document.getElementById('fov'),fovV=document.getElementById('fovv');
+function applyFov(){const a=innerWidth/innerHeight;cam.aspect=a;cam.fov=2*Math.atan(Math.tan(hfov*Math.PI/360)/a)*180/Math.PI;cam.updateProjectionMatrix();}
+fovIn.addEventListener('input',()=>{hfov=+fovIn.value;fovV.textContent=hfov+'°';applyFov();});fovIn.addEventListener('pointerdown',e=>e.stopPropagation());
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);applyFov();const a=w/h,hh=Math.max(3.5,4.4/a);topCam.left=-hh*a/2;topCam.right=hh*a/2;topCam.top=hh/2;topCam.bottom=-hh/2;topCam.updateProjectionMatrix();}
+addEventListener('resize',resize);resize();
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  if(mode==='walk'){
+    let f=0,s=0;
+    if(keys.KeyW||keys.ArrowUp)f+=1;if(keys.KeyS||keys.ArrowDown)f-=1;
+    if(keys.KeyD)s+=1;if(keys.KeyA)s-=1;
+    if(keys.ArrowLeft)yaw+=1.8*dt;if(keys.ArrowRight)yaw-=1.8*dt;
+    f-=jv.y;s+=jv.x;
+    const sp=90*dt;
+    const fx=-Math.sin(yaw),fz=-Math.cos(yaw),rx=Math.cos(yaw),rz=-Math.sin(yaw);
+    const dx=(fx*f+rx*s)*sp,dz=(fz*f+rz*s)*sp;
+    if(!blocked(pos.x+dx,pos.z))pos.x+=dx;
+    if(!blocked(pos.x,pos.z+dz))pos.z+=dz;
+    cam.position.set(pos.x/100,1.6,pos.z/100);
+    cam.lookAt(cam.position.x-Math.sin(yaw)*Math.cos(pitch),1.6+Math.sin(pitch),cam.position.z-Math.cos(yaw)*Math.cos(pitch));
+    renderer.render(scene,cam);
+  }else renderer.render(scene,topCam);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
